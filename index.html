@@ -563,22 +563,29 @@ const LIVE_FEEDS_KO = [
   { name:'의학신문', url:'https://news.google.com/rss/search?q=site:mdtoday.co.kr+의약&hl=ko&gl=KR&ceid=KR:ko' },
 ];
 
-// 실시간 폴백: corsproxy.io 로 직접 RSS 수집
+// 키워드로 Google News를 직접 검색 (영문 + 한국어)
+function buildGoogleNewsFeeds(keyword) {
+  if (!keyword || !keyword.trim()) return [];
+  const q = encodeURIComponent(keyword.trim());
+  return [
+    { name:'Google News (EN)', url:`https://news.google.com/rss/search?q=${q}+pharma&hl=en&gl=US&ceid=US:en` },
+    { name:'Google News (KO)', url:`https://news.google.com/rss/search?q=${q}+제약&hl=ko&gl=KR&ceid=KR:ko` },
+  ];
+}
+
+// 실시간: corsproxy.io 로 RSS 수집 (범용 피드 + 키워드 Google News 병렬)
 async function fetchNewsLive(keyword, count) {
-  const kw = (keyword || '').toLowerCase().trim();
-  const allFeeds = [...LIVE_FEEDS_EN, ...LIVE_FEEDS_KO];
+  const kw = (keyword || '').trim();
+  const googleFeeds = buildGoogleNewsFeeds(kw);
+  // 키워드가 있으면 Google News 먼저, 범용 피드는 보조
+  const allFeeds = kw
+    ? [...googleFeeds, ...LIVE_FEEDS_EN, ...LIVE_FEEDS_KO]
+    : [...LIVE_FEEDS_EN, ...LIVE_FEEDS_KO];
+
   const settled = await Promise.allSettled(
     allFeeds.map(f => fetchRssViaProxy(f.url, f.name))
   );
-  let articles = settled.filter(r=>r.status==='fulfilled').flatMap(r=>r.value);
-
-  if (kw) {
-    const words = kw.split(/[\s,]+/).filter(w=>w.length>1);
-    articles = articles.filter(a => {
-      const text = `${a.title} ${a.snippet}`.toLowerCase();
-      return words.some(w => text.includes(w));
-    });
-  }
+  const articles = settled.filter(r=>r.status==='fulfilled').flatMap(r=>r.value);
   return articles;
 }
 

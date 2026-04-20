@@ -19,6 +19,7 @@ MAX_PER_SOURCE = 20
 # English: direct RSS feeds
 # Korean: Google News RSS (site: 검색) — 직접 RSS URL이 없는 경우
 SOURCES = [
+    # ── 영문 범용 RSS ──────────────────────────────────────────────────────
     {
         "name": "Biopharma Dive",
         "url":  "https://www.biopharmadive.com/feeds/news",
@@ -39,7 +40,23 @@ SOURCES = [
         "url":  "https://www.statnews.com/feed/",
         "lang": "en",
     },
-    # 한국어 소스 — Google News 한국어 RSS (index.html fallback 과 동일한 URL)
+    # ── Google News 키워드 검색 (영문·한국어) — 신약/파이프라인 중심 ────────
+    {
+        "name": "Google News (pharma EN)",
+        "url":  "https://news.google.com/rss/search?q=pharma+drug+approval+clinical+trial&hl=en&gl=US&ceid=US:en",
+        "lang": "en",
+    },
+    {
+        "name": "Google News (oncology EN)",
+        "url":  "https://news.google.com/rss/search?q=oncology+drug+FDA+approval&hl=en&gl=US&ceid=US:en",
+        "lang": "en",
+    },
+    {
+        "name": "Google News (biopharma KO)",
+        "url":  "https://news.google.com/rss/search?q=신약+임상+FDA&hl=ko&gl=KR&ceid=KR:ko",
+        "lang": "ko",
+    },
+    # ── 한국어 소스 — Google News 한국어 RSS (index.html fallback 과 동일한 URL) ──
     {
         "name": "데일리팜",
         "url":  "https://news.google.com/rss/search?q=site:dailypharm.com+제약&hl=ko&gl=KR&ceid=KR:ko",

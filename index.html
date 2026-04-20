@@ -603,23 +603,24 @@ function dedupe(articles) {
 }
 
 async function fetchBiohealthNews(keyword, count = 15) {
-  // ── 1차: data/news.json (GitHub Actions가 채워줌, CORS 없음) ──
-  let staticArticles = [];
-  try {
-    const r = await fetchWithTimeout('./data/news.json', 8000);
-    if (r.ok) {
-      const data = await r.json();
-      staticArticles = data.articles || [];
-    }
-  } catch(_) {}
+  // news.json(GitHub Actions 캐시) + corsproxy.io 실시간 RSS 를 항상 병렬 수집 후 합산
+  // → 로컬/GitHub Pages 모두 동일한 소스에서 데이터를 받음
+  const [jsonResult, liveResult] = await Promise.allSettled([
+    // ── 1: data/news.json (GitHub Actions 수집 캐시) ──
+    fetchWithTimeout('./data/news.json', 8000)
+      .then(r => r.ok ? r.json() : { articles: [] })
+      .then(data => data.articles || [])
+      .catch(() => []),
+    // ── 2: corsproxy.io 실시간 RSS ──
+    fetchNewsLive(keyword, count * 2),
+  ]);
 
-  // 키워드 필터 적용
-  const filtered = kwFilter(staticArticles, keyword);
-  if (filtered.length) return dedupe(filtered).slice(0, count);
+  const staticArticles = jsonResult.status === 'fulfilled' ? jsonResult.value : [];
+  const liveArticles   = liveResult.status  === 'fulfilled' ? liveResult.value  : [];
 
-  // ── 2차: 정적 JSON에 결과 없으면 → corsproxy.io 실시간 수집 ──
-  const live = await fetchNewsLive(keyword, count);
-  return dedupe(live).slice(0, count);
+  // 두 소스 합산 → 키워드 필터 → 중복 제거 → 최신순 슬라이스
+  const combined = kwFilter([...staticArticles, ...liveArticles], keyword);
+  return dedupe(combined).slice(0, count);
 }
 
 // ── UI Functions ───────────────────────────────────────────────────────

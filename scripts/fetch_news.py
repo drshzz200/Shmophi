@@ -39,20 +39,20 @@ SOURCES = [
         "url":  "https://www.statnews.com/feed/",
         "lang": "en",
     },
-    # 한국어 소스 — Google News 한국어 RSS
+    # 한국어 소스 — Google News 한국어 RSS (index.html fallback 과 동일한 URL)
     {
         "name": "데일리팜",
-        "url":  "https://news.google.com/rss/search?q=site:dailypharm.com&hl=ko&gl=KR&ceid=KR:ko",
+        "url":  "https://news.google.com/rss/search?q=site:dailypharm.com+제약&hl=ko&gl=KR&ceid=KR:ko",
         "lang": "ko",
     },
     {
         "name": "약업신문",
-        "url":  "https://news.google.com/rss/search?q=site:yakup.com&hl=ko&gl=KR&ceid=KR:ko",
+        "url":  "https://news.google.com/rss/search?q=site:yakup.com+제약&hl=ko&gl=KR&ceid=KR:ko",
         "lang": "ko",
     },
     {
         "name": "의학신문",
-        "url":  "https://news.google.com/rss/search?q=site:mdtoday.co.kr&hl=ko&gl=KR&ceid=KR:ko",
+        "url":  "https://news.google.com/rss/search?q=site:mdtoday.co.kr+의약&hl=ko&gl=KR&ceid=KR:ko",
         "lang": "ko",
     },
 ]

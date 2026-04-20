@@ -582,45 +582,44 @@ async function fetchNewsLive(keyword, count) {
   return articles;
 }
 
-async function fetchBiohealthNews(keyword, count = 15) {
-  let articles = [];
-  let usedLive = false;
+function kwFilter(articles, keyword) {
+  if (!keyword || !keyword.trim()) return articles;
+  const words = keyword.toLowerCase().trim()
+    .split(/[\s,]+/).filter(w => w.length > 1);
+  if (!words.length) return articles;
+  return articles.filter(a => {
+    const text = `${a.title} ${a.snippet}`.toLowerCase();
+    return words.some(w => text.includes(w));
+  });
+}
 
-  // ── 1차: 같은 도메인 data/news.json (GitHub Actions가 채워줌) ──
+function dedupe(articles) {
+  const seen = new Set();
+  return articles.filter(a => {
+    const key = (a.title || '').toLowerCase().substring(0, 60);
+    if (!key || seen.has(key)) return false;
+    seen.add(key); return true;
+  });
+}
+
+async function fetchBiohealthNews(keyword, count = 15) {
+  // ── 1차: data/news.json (GitHub Actions가 채워줌, CORS 없음) ──
+  let staticArticles = [];
   try {
     const r = await fetchWithTimeout('./data/news.json', 8000);
     if (r.ok) {
       const data = await r.json();
-      articles = data.articles || [];
+      staticArticles = data.articles || [];
     }
   } catch(_) {}
 
-  // ── 2차: news.json이 비었거나 실패 → 실시간 RSS 수집 ──
-  if (!articles.length) {
-    articles = await fetchNewsLive(keyword, count);
-    usedLive = true;
-  }
+  // 키워드 필터 적용
+  const filtered = kwFilter(staticArticles, keyword);
+  if (filtered.length) return dedupe(filtered).slice(0, count);
 
-  // 키워드 필터 (1차 데이터에만 적용 — 2차는 내부에서 이미 필터됨)
-  if (!usedLive && keyword && keyword.trim()) {
-    const words = keyword.toLowerCase().trim()
-      .split(/[\s,]+/).filter(w=>w.length>1);
-    if (words.length) {
-      articles = articles.filter(a => {
-        const text = `${a.title} ${a.snippet}`.toLowerCase();
-        return words.some(w=>text.includes(w));
-      });
-    }
-  }
-
-  // 중복 제거
-  const seen = new Set();
-  const unique = [];
-  for (const a of articles) {
-    const key = (a.title||'').toLowerCase().substring(0,60);
-    if (key && !seen.has(key)) { seen.add(key); unique.push(a); }
-  }
-  return unique.slice(0, count);
+  // ── 2차: 정적 JSON에 결과 없으면 → corsproxy.io 실시간 수집 ──
+  const live = await fetchNewsLive(keyword, count);
+  return dedupe(live).slice(0, count);
 }
 
 // ── UI Functions ───────────────────────────────────────────────────────
@@ -828,27 +827,19 @@ async function loadBiohealthNews(keyword) {
   const btnLabel = document.getElementById('news-btn-label');
   const kw = (keyword !== undefined && keyword !== null) ? String(keyword).trim() : lastSearchKeyword;
   btnLabel.innerHTML = '<span class="spinner" style="border-color:var(--primary);border-top-color:transparent;width:14px;height:14px"></span>';
+  if (!kw) {
+    container.innerHTML = `<div class="state-message"><span class="icon">&#128240;</span>
+      <h3>상단 검색창에 키워드를 입력하세요</h3>
+      <p>약물명 또는 질환명 검색 시 관련 뉴스를 자동으로 찾아드립니다.</p></div>`;
+    btnLabel.textContent = 'Refresh';
+    return;
+  }
   try {
-    const count = kw ? 15 : 20;
-    const articles = await fetchBiohealthNews(kw, count);
+    const articles = await fetchBiohealthNews(kw, 15);
     currentNewsArticles = articles;
-
-    // 마지막 업데이트 시간 표시
-    try {
-      const meta = await (await fetchWithTimeout('./data/news.json', 5000)).json();
-      const updEl = document.getElementById('news-updated');
-      if (updEl && meta.updated) {
-        const d = new Date(meta.updated);
-        updEl.textContent = `업데이트: ${d.toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}`;
-      }
-    } catch(_) {}
-
     if (!articles.length) {
-      const noDataMsg = kw
-        ? `"${esc(kw)}" 관련 최신 기사가 없습니다`
-        : '아직 뉴스 데이터가 없습니다 (GitHub Actions가 곧 수집합니다)';
       container.innerHTML = `<div class="state-message"><span class="icon">&#128237;</span>
-        <h3>${noDataMsg}</h3>
+        <h3>"${esc(kw)}" 관련 최신 기사가 없습니다</h3>
         <p>직접 방문:&nbsp;
         <a href="https://www.biopharmadive.com/" target="_blank" style="color:var(--primary)">Biopharma Dive</a> &middot;
         <a href="https://www.fiercepharma.com/" target="_blank" style="color:var(--primary)">Fierce Pharma</a> &middot;
@@ -868,7 +859,26 @@ async function loadBiohealthNews(keyword) {
 
 // ── Init ───────────────────────────────────────────────────────────────
 document.getElementById('kw-input').addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
-document.addEventListener('DOMContentLoaded', () => { loadBiohealthNews(); });
+document.addEventListener('DOMContentLoaded', () => {
+  // 초기 상태: 키워드 입력을 유도하는 안내 메시지
+  const container = document.getElementById('news-container');
+  if (container) {
+    container.innerHTML = `<div class="state-message">
+      <span class="icon">&#128240;</span>
+      <h3>상단 검색창에 키워드를 입력하세요</h3>
+      <p>약물명 또는 질환명 검색 시 관련 뉴스를 자동으로 찾아드립니다.<br>
+      <span style="font-size:.85rem;color:var(--text-secondary)">예: semaglutide · tirzepatide · chronic kidney disease · NSCLC</span></p>
+    </div>`;
+  }
+  // 마지막 업데이트 시간만 표시
+  fetchWithTimeout('./data/news.json', 5000).then(r => r.json()).then(meta => {
+    const updEl = document.getElementById('news-updated');
+    if (updEl && meta.updated) {
+      const d = new Date(meta.updated);
+      updEl.textContent = `업데이트: ${d.toLocaleString('ko-KR', {month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}`;
+    }
+  }).catch(() => {});
+});
 </script>
 </body>
 </html>

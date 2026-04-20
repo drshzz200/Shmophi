@@ -511,7 +511,8 @@ function analyzePipelineImpactClient(articles, newsArticles) {
 }
 
 // ── Biohealth News ─────────────────────────────────────────────────────
-// GitHub Actions가 6시간마다 data/news.json을 업데이트 → 같은 도메인에서 fetch (CORS 없음)
+// 1차: data/news.json (GitHub Actions 수집, 같은 도메인, CORS 없음)
+// 2차: corsproxy.io 통해 직접 RSS 실시간 수집 (폴백)
 
 function fetchWithTimeout(url, ms) {
   const ctrl = new AbortController();
@@ -519,26 +520,95 @@ function fetchWithTimeout(url, ms) {
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
 }
 
+// RSS XML 파싱 (DOMParser)
+function parseRssItems(xmlText, sourceName) {
+  try {
+    const xml = new DOMParser().parseFromString(xmlText, 'text/xml');
+    if (xml.querySelector('parsererror')) return [];
+    return Array.from(xml.querySelectorAll('item')).map(item => {
+      const title = item.querySelector('title')?.textContent?.trim() || '';
+      const link  = item.querySelector('link')?.textContent?.trim()
+                 || item.querySelector('guid')?.textContent?.trim() || '';
+      const pub   = item.querySelector('pubDate')?.textContent?.trim() || '';
+      const desc  = (item.querySelector('description')?.textContent || '')
+                      .replace(/<[^>]*>/g,'').trim().substring(0,250);
+      return { title, link, source: sourceName,
+               published_date: pub.substring(0,16)||'Recent', snippet: desc };
+    }).filter(a => a.title && a.link);
+  } catch(_) { return []; }
+}
+
+// corsproxy.io 를 통해 RSS 한 건 fetch
+async function fetchRssViaProxy(rssUrl, sourceName, timeout=12000) {
+  const proxy = `https://corsproxy.io/?${encodeURIComponent(rssUrl)}`;
+  try {
+    const r = await fetchWithTimeout(proxy, timeout);
+    if (!r.ok) return [];
+    const xml = await r.text();
+    return parseRssItems(xml, sourceName);
+  } catch(_) { return []; }
+}
+
+// 영문 직접 RSS 피드 목록
+const LIVE_FEEDS_EN = [
+  { name:'Biopharma Dive', url:'https://www.biopharmadive.com/feeds/news' },
+  { name:'Fierce Pharma',  url:'https://www.fiercepharma.com/rss/news' },
+  { name:'Endpoints News', url:'https://endpts.com/feed/' },
+  { name:'STAT News',      url:'https://www.statnews.com/feed/' },
+];
+// 한국어: Google News 한국어 RSS
+const LIVE_FEEDS_KO = [
+  { name:'데일리팜', url:'https://news.google.com/rss/search?q=site:dailypharm.com+제약&hl=ko&gl=KR&ceid=KR:ko' },
+  { name:'약업신문', url:'https://news.google.com/rss/search?q=site:yakup.com+제약&hl=ko&gl=KR&ceid=KR:ko' },
+  { name:'의학신문', url:'https://news.google.com/rss/search?q=site:mdtoday.co.kr+의약&hl=ko&gl=KR&ceid=KR:ko' },
+];
+
+// 실시간 폴백: corsproxy.io 로 직접 RSS 수집
+async function fetchNewsLive(keyword, count) {
+  const kw = (keyword || '').toLowerCase().trim();
+  const allFeeds = [...LIVE_FEEDS_EN, ...LIVE_FEEDS_KO];
+  const settled = await Promise.allSettled(
+    allFeeds.map(f => fetchRssViaProxy(f.url, f.name))
+  );
+  let articles = settled.filter(r=>r.status==='fulfilled').flatMap(r=>r.value);
+
+  if (kw) {
+    const words = kw.split(/[\s,]+/).filter(w=>w.length>1);
+    articles = articles.filter(a => {
+      const text = `${a.title} ${a.snippet}`.toLowerCase();
+      return words.some(w => text.includes(w));
+    });
+  }
+  return articles;
+}
+
 async function fetchBiohealthNews(keyword, count = 15) {
   let articles = [];
+  let usedLive = false;
+
+  // ── 1차: 같은 도메인 data/news.json (GitHub Actions가 채워줌) ──
   try {
-    // 같은 도메인의 JSON 파일 로드 → CORS 불필요
-    const r = await fetchWithTimeout('./data/news.json', 10000);
-    if (!r.ok) throw new Error('news.json not available');
-    const data = await r.json();
-    articles = data.articles || [];
-  } catch(e) {
-    return [];
+    const r = await fetchWithTimeout('./data/news.json', 8000);
+    if (r.ok) {
+      const data = await r.json();
+      articles = data.articles || [];
+    }
+  } catch(_) {}
+
+  // ── 2차: news.json이 비었거나 실패 → 실시간 RSS 수집 ──
+  if (!articles.length) {
+    articles = await fetchNewsLive(keyword, count);
+    usedLive = true;
   }
 
-  // 키워드 필터 (JS-side, 추가 네트워크 없음)
-  if (keyword && keyword.trim()) {
+  // 키워드 필터 (1차 데이터에만 적용 — 2차는 내부에서 이미 필터됨)
+  if (!usedLive && keyword && keyword.trim()) {
     const words = keyword.toLowerCase().trim()
-      .split(/[\s,]+/).filter(w => w.length > 1);
+      .split(/[\s,]+/).filter(w=>w.length>1);
     if (words.length) {
       articles = articles.filter(a => {
         const text = `${a.title} ${a.snippet}`.toLowerCase();
-        return words.some(w => text.includes(w));
+        return words.some(w=>text.includes(w));
       });
     }
   }
@@ -547,7 +617,7 @@ async function fetchBiohealthNews(keyword, count = 15) {
   const seen = new Set();
   const unique = [];
   for (const a of articles) {
-    const key = (a.title || '').toLowerCase().substring(0, 60);
+    const key = (a.title||'').toLowerCase().substring(0,60);
     if (key && !seen.has(key)) { seen.add(key); unique.push(a); }
   }
   return unique.slice(0, count);
